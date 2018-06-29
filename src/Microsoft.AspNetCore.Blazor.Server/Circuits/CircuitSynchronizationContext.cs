@@ -15,13 +15,13 @@ namespace Microsoft.AspNetCore.Blazor.Server.Circuits
         private static readonly ContextCallback ExecutionContextThunk = (object state) =>
         {
             var item = (WorkItem)state;
-            item.Callback(item.State);
+            item.SynchronizationContext.ExecuteSynchronously(null, item.Callback, item.State);
         };
 
-        private static readonly WaitCallback BackgroundWorkThunk = (object state) =>
+        private static readonly Action<Task, object> BackgroundWorkThunk = (Task task, object state) =>
         {
-            var context = (CircuitSynchronizationContext)state;
-            context.ExecuteBackgroundWork();
+            var item = (WorkItem)state;
+            item.SynchronizationContext.ExecuteBackground(item);
         };
 
         private readonly State _state;
@@ -117,31 +117,53 @@ namespace Microsoft.AspNetCore.Blazor.Server.Circuits
         // asynchronously runs the callback
         public override void Post(SendOrPostCallback d, object state)
         {
-            bool taken = false;
-            Monitor.TryEnter(_state.Monitor, ref taken);
-            if (taken)
+            TaskCompletionSource<object> completion;
+            lock (_state.Lock)
             {
-                // We can execute this synchronously because nothing is currently running.
-                var original = Current;
-
-                try
+                if (!_state.Task.IsCompleted)
                 {
-                    SetSynchronizationContext(this);
-                    _state.IsBusy = true;
-
-                    ExecuteSynchronously(d, state);
-                }
-                finally
-                {
-                    _state.IsBusy = false;
-                    SetSynchronizationContext(original);
-
-                    Monitor.Exit(_state.Monitor);
+                    _state.Task = Enqueue(_state.Task, d, state);
+                    return;
                 }
 
-                return;
+                // We can execute this synchronously because nothing is currently running
+                // or queued.
+                completion = new TaskCompletionSource<object>();
+                _state.Task = completion.Task;
             }
 
+            ExecuteSynchronously(completion, d, state);
+        }
+
+        // synchronously runs the callback
+        public override void Send(SendOrPostCallback d, object state)
+        {
+            Task antecedant;
+            var completion = new TaskCompletionSource<object>();
+
+            lock (_state.Lock)
+            {
+                antecedant = _state.Task;
+                _state.Task = completion.Task;
+            }
+
+            // We have to block. That's the contract of Send - we don't expect this to be used
+            // in many scenarios in Blazor.
+            //
+            // Using Wait here is ok because the antecedant task will never throw.
+            antecedant.Wait();
+
+            ExecuteSynchronously(completion, d, state);
+        }
+
+        // shallow copy
+        public override SynchronizationContext CreateCopy()
+        {
+            return new CircuitSynchronizationContext(_state);
+        }
+
+        private Task Enqueue(Task antecedant, SendOrPostCallback d, object state)
+        {
             // If we get here is means that a callback is being queued while something is currently executing
             // in this context. Let's instead add it to the queue and yield.
             //
@@ -151,127 +173,67 @@ namespace Microsoft.AspNetCore.Blazor.Server.Circuits
             //
             // We need to capture the execution context so we can restore it later. This code is similar to
             // the call path of ThreadPool.QueueUserWorkItem and System.Threading.QueueUserWorkItemCallback.
-            ExecutionContext context = null;
+            ExecutionContext executionContext = null;
             if (!ExecutionContext.IsFlowSuppressed())
             {
-                context = ExecutionContext.Capture();
+                executionContext = ExecutionContext.Capture();
             }
 
-            NotifyPendingWork(new WorkItem()
+            return antecedant.ContinueWith(BackgroundWorkThunk, new WorkItem()
             {
-                Context = context,
+                SynchronizationContext = this,
+                ExecutionContext = executionContext,
                 Callback = d,
                 State = state,
-            });
+            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Current);
         }
 
-        // synchronously runs the callback
-        public override void Send(SendOrPostCallback d, object state)
+        private void ExecuteSynchronously(
+            TaskCompletionSource<object> completion,
+            SendOrPostCallback d,
+            object state)
         {
             var original = Current;
             try
             {
-                Monitor.Enter(_state.Monitor);
-
                 SetSynchronizationContext(this);
                 _state.IsBusy = true;
 
-                ExecuteSynchronously(d, state);
+                d(state);
             }
             finally
             {
                 _state.IsBusy = false;
                 SetSynchronizationContext(original);
 
-                Monitor.Exit(_state.Monitor);
+                completion?.SetResult(null);
             }
         }
 
-        // shallow copy
-        public override SynchronizationContext CreateCopy()
+        private void ExecuteBackground(WorkItem item)
         {
-            return new CircuitSynchronizationContext(_state);
-        }
-
-        private void NotifyPendingWork(WorkItem item)
-        {
-            lock (_state.WorkerLock)
+            if (item.ExecutionContext == null)
             {
-                _state.Queue.Enqueue(item);
-
-                if (!_state.IsWorkerActive)
+                try
                 {
-                    _state.IsWorkerActive = true;
-
-                    // Perf - using a static thunk here to avoid a delegate allocation.
-                    ThreadPool.UnsafeQueueUserWorkItem(BackgroundWorkThunk, this);
+                    ExecuteSynchronously(null, item.Callback, item.State);
                 }
-            }
-        }
+                catch (Exception ex)
+                {
+                    DispatchException(ex);
+                }
 
-        private void ExecuteSynchronously(SendOrPostCallback d, object state)
-        {
-            d(state);
-        }
-
-        private void ExecuteSynchronously(WorkItem item)
-        {
-            if (item.Context == null)
-            {
-                item.Callback(item.State);
                 return;
             }
 
             // Perf - using a static thunk here to avoid a delegate allocation.
-            ExecutionContext.Run(item.Context, ExecutionContextThunk, item);
-        }
-
-        private void ExecuteBackgroundWork()
-        {
-            Monitor.Enter(_state.Monitor);
-            _state.IsBusy = true;
-
-            var original = Current;
             try
             {
-                SetSynchronizationContext(this);
-
-                while (_state.Queue.TryDequeue(out var item))
-                {
-                    try
-                    {
-                        ExecuteSynchronously(item);
-                    }
-                    catch (Exception ex)
-                    {
-                        DispatchException(ex);
-                    }
-                }
+                ExecutionContext.Run(item.ExecutionContext, ExecutionContextThunk, item);
             }
-            finally
+            catch (Exception ex)
             {
-                SetSynchronizationContext(original);
-
-                _state.IsBusy = false;
-                Monitor.Exit(_state.Monitor);
-            }
-
-            // Now that we've processed the queue we need to figure out if more work items were queued
-            // while we were running. Since IsWorkerActive is protected by a lock, we know that it's true,
-            // which means that no one else coul have started a new batch of background work.
-            //
-            // So our task is simply to check if there is still work and start a new background worker
-            // job.
-            lock (_state.WorkerLock)
-            {
-                if (_state.Queue.IsEmpty)
-                {
-                    _state.IsWorkerActive = false;
-                    return;
-                }
-
-                // Perf - using a static thunk here to avoid a delegate allocation.
-                ThreadPool.UnsafeQueueUserWorkItem(BackgroundWorkThunk, this);
+                DispatchException(ex);
             }
         }
 
@@ -287,21 +249,19 @@ namespace Microsoft.AspNetCore.Blazor.Server.Circuits
         private class State
         {
             public bool IsBusy; // Just for debugging
-            public object Monitor = new object();
-
-            public bool IsWorkerActive;
-            public ConcurrentQueue<WorkItem> Queue = new ConcurrentQueue<WorkItem>();
-            public object WorkerLock = new object();
+            public object Lock = new object();
+            public Task Task = Task.CompletedTask;
 
             public override string ToString()
             {
-                return $"{{ Queue: {Queue.Count}, Busy: {IsBusy}, Worker Active: {IsWorkerActive} }}";
+                return $"{{ Busy: {IsBusy}, Pending Task: {Task} }}";
             }
         }
 
         private class WorkItem
         {
-            public ExecutionContext Context;
+            public CircuitSynchronizationContext SynchronizationContext;
+            public ExecutionContext ExecutionContext;
             public SendOrPostCallback Callback;
             public object State;
         }

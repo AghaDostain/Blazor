@@ -376,9 +376,12 @@ namespace Microsoft.AspnetCore.Blazor.Server
 
                 capturedCulture = CultureInfo.CurrentCulture;
                 capturedContext = SynchronizationContext.Current;
+
+                e1.Set();
             }, null);
 
             // Assert
+            Assert.True(e1.Wait(Timeout), "timeout");
             Assert.Same(CultureInfo.CurrentCulture, capturedCulture);
             Assert.Same(context, capturedContext);
         }
