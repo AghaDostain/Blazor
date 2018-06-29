@@ -2,6 +2,7 @@ import '../../Microsoft.JSInterop/JavaScriptRuntime/src/Microsoft.JSInterop';
 import './GlobalExports';
 import * as Environment from './Environment';
 import * as signalR from '@aspnet/signalr';
+import { MessagePackHubProtocol } from '@aspnet/signalr-protocol-msgpack';
 import { OutOfProcessRenderBatch } from './Rendering/RenderBatch/OutOfProcessRenderBatch';
 import { internalFunctions as uriHelperFunctions } from './Services/UriHelper';
 import { renderBatch } from './Rendering/Renderer';
@@ -14,6 +15,7 @@ function boot() {
 
   const connection = new signalR.HubConnectionBuilder()
     .withUrl('/_blazor')
+    .withHubProtocol(new MessagePackHubProtocol())
     .configureLogging(signalR.LogLevel.Information)
     .build();
 
