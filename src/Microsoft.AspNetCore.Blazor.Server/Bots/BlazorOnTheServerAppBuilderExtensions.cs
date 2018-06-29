@@ -3,6 +3,7 @@
 
 using MessagePack;
 using Microsoft.AspNetCore.Blazor.Browser.Rendering;
+using Microsoft.AspNetCore.Blazor.Server;
 using Microsoft.AspNetCore.Blazor.Server.Bots;
 using Microsoft.Extensions.DependencyInjection;
 using System;

@@ -5,8 +5,9 @@ using MessagePack;
 using MessagePack.Formatters;
 using Microsoft.AspNetCore.Blazor.Rendering;
 using System;
+using System.IO;
 
-namespace Microsoft.AspNetCore.Builder
+namespace Microsoft.AspNetCore.Blazor.Server
 {
     /// <summary>
     /// A MessagePack IFormatterResolver that provides an efficient binary serialization
@@ -28,11 +29,15 @@ namespace Microsoft.AspNetCore.Builder
 
             public int Serialize(ref byte[] bytes, int offset, RenderBatch value, IFormatterResolver formatterResolver)
             {
-                // TODO: Actually serialize the data
-                // We should also consider the perf tradeoff of writing out to a byte[] in memory
-                // versus using the MessagePack stream APIs.
-                var renderBatchAsBytes = new byte[] { 0x01, 0x02, 0x03 };
-                return MessagePackBinary.WriteBytes(ref bytes, offset, renderBatchAsBytes);
+                using (var memoryStream = new MemoryStream())
+                using (var renderBatchWriter = new RenderBatchWriter(memoryStream, leaveOpen: false))
+                {
+                    renderBatchWriter.Write(value);
+                    
+                    var bytesBuffer = memoryStream.GetBuffer();
+                    return MessagePackBinary.WriteBytes(ref bytes, offset, bytesBuffer, 0, (int)memoryStream.Length);
+                }
+                    
             }
         }
     }
