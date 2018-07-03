@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using Microsoft.AspNetCore.Http;
@@ -51,7 +51,7 @@ namespace Microsoft.AspNetCore.Builder
             var distDirStaticFiles = new StaticFileOptions
             {
                 FileProvider = new PhysicalFileProvider(config.DistPath),
-                ContentTypeProvider = CreateContentTypeProvider(),
+                ContentTypeProvider = CreateContentTypeProvider(servePdbs: env.IsDevelopment()),
                 OnPrepareResponse = SetCacheHeaders
             };
 
@@ -116,12 +116,18 @@ namespace Microsoft.AspNetCore.Builder
         private static bool IsNotFrameworkDir(HttpContext context)
             => !context.Request.Path.StartsWithSegments("/_framework");
 
-        private static IContentTypeProvider CreateContentTypeProvider()
+        private static IContentTypeProvider CreateContentTypeProvider(bool servePdbs)
         {
             var result = new FileExtensionContentTypeProvider();
             result.Mappings.Add(".dll", MediaTypeNames.Application.Octet);
             result.Mappings.Add(".mem", MediaTypeNames.Application.Octet);
             result.Mappings.Add(".wasm", WasmMediaTypeNames.Application.Wasm);
+
+            if (servePdbs)
+            {
+                result.Mappings.Add(".pdb", MediaTypeNames.Application.Octet);
+            }
+
             return result;
         }
     }
