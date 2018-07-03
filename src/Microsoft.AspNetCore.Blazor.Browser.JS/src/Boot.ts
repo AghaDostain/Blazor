@@ -10,7 +10,7 @@ async function boot() {
   const isLinkerEnabled = thisScriptElem.getAttribute('linker-enabled') === 'true';
   const entryPointDll = getRequiredBootScriptAttribute(thisScriptElem, 'main');
   const entryPointMethod = getRequiredBootScriptAttribute(thisScriptElem, 'entrypoint');
-  const entryPointAssemblyName = getAssemblyNameFromUrl(entryPointDll);
+  const entryPointAssemblyName = getAssemblyNameFromUrl(entryPointDll, /* includeExtension */ false);
   const referenceAssembliesCommaSeparated = thisScriptElem.getAttribute('references') || '';
   const referenceAssemblies = referenceAssembliesCommaSeparated
     .split(',')

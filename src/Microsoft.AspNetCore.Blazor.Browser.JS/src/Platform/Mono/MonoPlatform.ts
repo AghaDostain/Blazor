@@ -12,6 +12,11 @@ let invoke_method: (method: MethodHandle, target: System_Object, argsArrayPtr: n
 let mono_string_get_utf8: (managedString: System_String) => Mono.Utf8Ptr;
 let mono_string: (jsString: string) => System_String;
 
+declare const MONO: any;
+
+// TODO: Is there any reason to disable it? Any perf gain?
+const enableDebugging = true;
+
 export const monoPlatform: Platform = {
   start: function start(loadAssemblyUrls: string[]) {
     return new Promise<void>((resolve, reject) => {
@@ -217,18 +222,30 @@ function createEmscriptenModuleInstance(loadAssemblyUrls: string[], onReady: () 
     mono_string = Module.cwrap('mono_wasm_string_from_js', 'number', ['string']);
 
     Module.FS_createPath('/', 'appBinDir', true, true);
+    MONO.loaded_files = []; // Used by debugger
     loadAssemblyUrls.forEach(url =>
-      FS.createPreloadedFile('appBinDir', `${getAssemblyNameFromUrl(url)}.dll`, url, true, false, undefined, onError));
+      FS.createPreloadedFile('appBinDir', getAssemblyNameFromUrl(url, /* includeExtension */ true), url, true, false,
+        () => { MONO.loaded_files.push(toAbsoluteUrl(url)); },
+        onError
+      )
+    );
   });
 
   module.postRun.push(() => {
-    const load_runtime = Module.cwrap('mono_wasm_load_runtime', null, ['string']);
-    load_runtime('appBinDir');
+    const load_runtime = Module.cwrap('mono_wasm_load_runtime', null, ['string', 'number']);
+    load_runtime('appBinDir', enableDebugging ? 1 : 0);
+    MONO.mono_wasm_runtime_is_ready = true;
     attachInteropInvoker();
     onReady();
   });
 
   return module;
+}
+
+const anchorTagForAbsoluteUrlConversions = document.createElement('a');
+function toAbsoluteUrl(possiblyRelativeUrl: string) {
+  anchorTagForAbsoluteUrlConversions.href = possiblyRelativeUrl;
+  return anchorTagForAbsoluteUrlConversions.href;
 }
 
 function asyncLoad(url, onload, onerror) {
