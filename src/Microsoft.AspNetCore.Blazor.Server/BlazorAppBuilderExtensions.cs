@@ -23,35 +23,61 @@ namespace Microsoft.AspNetCore.Builder
         /// Configures the middleware pipeline to work with Blazor.
         /// </summary>
         /// <typeparam name="TProgram">Any type from the client app project. This is used to identify the client app assembly.</typeparam>
-        /// <param name="applicationBuilder"></param>
+        /// <param name="applicationBuilder">The <see cref="IApplicationBuilder"/>.</param>
         public static void UseBlazor<TProgram>(
             this IApplicationBuilder applicationBuilder)
         {
-            var clientAssemblyInServerBinDir = typeof(TProgram).Assembly;
-            applicationBuilder.UseBlazor(new BlazorOptions
+            applicationBuilder.UseBlazor<TProgram>(null);
+        }
+
+        /// <summary>
+        /// Configures the middleware pipeline to work with Blazor.
+        /// </summary>
+        /// <typeparam name="TProgram">Any type from the client app project. This is used to identify the client app assembly.</typeparam>
+        /// <param name="applicationBuilder">The <see cref="IApplicationBuilder"/>.</param>
+        /// <param name="configuration">A callback that will be invoked to set configuration options.</param>
+        public static void UseBlazor<TProgram>(
+            this IApplicationBuilder applicationBuilder,
+            Action<BlazorOptions> configuration)
+        {
+            applicationBuilder.UseBlazor(options =>
             {
-                ClientAssemblyPath = clientAssemblyInServerBinDir.Location,
+                var clientAssemblyInServerBinDir = typeof(TProgram).Assembly;
+                options.ClientAssemblyPath = clientAssemblyInServerBinDir.Location;
+                configuration?.Invoke(options);
             });
         }
 
         /// <summary>
         /// Configures the middleware pipeline to work with Blazor.
         /// </summary>
-        /// <param name="applicationBuilder"></param>
-        /// <param name="options"></param>
+        /// <param name="applicationBuilder">The <see cref="IApplicationBuilder"/>.</param>
+        /// <param name="configuration">A callback that will be invoked to set configuration options.</param>
         public static void UseBlazor(
             this IApplicationBuilder applicationBuilder,
-            BlazorOptions options)
+            Action<BlazorOptions> configuration)
         {
+            // Prepare options
+            var env = (IHostingEnvironment)applicationBuilder.ApplicationServices.GetService(typeof(IHostingEnvironment));
+            var options = new BlazorOptions
+            {
+                EnableDebugging = env.IsDevelopment()
+            };
+            configuration?.Invoke(options);
+
+            if (string.IsNullOrEmpty(options.ClientAssemblyPath))
+            {
+                throw new InvalidOperationException($"No value was specified for {nameof(options.ClientAssemblyPath)}.");
+            }
+
             // TODO: Make the .blazor.config file contents sane
             // Currently the items in it are bizarre and don't relate to their purpose,
             // hence all the path manipulation here. We shouldn't be hardcoding 'dist' here either.
-            var env = (IHostingEnvironment)applicationBuilder.ApplicationServices.GetService(typeof(IHostingEnvironment));
             var config = BlazorConfig.Read(options.ClientAssemblyPath);
             var distDirStaticFiles = new StaticFileOptions
             {
                 FileProvider = new PhysicalFileProvider(config.DistPath),
-                ContentTypeProvider = CreateContentTypeProvider(servePdbs: env.IsDevelopment()),
+                ContentTypeProvider = CreateContentTypeProvider(servePdbs: options.EnableDebugging),
                 OnPrepareResponse = SetCacheHeaders
             };
 
@@ -82,6 +108,12 @@ namespace Microsoft.AspNetCore.Builder
                     FileProvider = new PhysicalFileProvider(config.WebRootPath),
                     OnPrepareResponse = SetCacheHeaders
                 });
+            }
+
+            // Accept debugger connections
+            if (options.EnableDebugging)
+            {
+                applicationBuilder.UseMonoDebugProxy();
             }
 
             // Finally, use SPA fallback routing (serve default page for anything else,
