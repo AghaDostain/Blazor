@@ -63,6 +63,8 @@
             _ReadResolvedBlazorApplicationAssemblies
             _IntermediateCopyBlazorApplicationAssemblies
             _TouchBlazorApplicationAssemblies
+        Then in both cases:
+          _CollectPdbs
       _GenerateBlazorIndexHtml
     _BlazorCopyFilesToOutputDirectory
 
@@ -307,7 +309,7 @@
 
   </Target>
 
-  <Target Name="_BlazorResolveOutputBinaries" DependsOnTargets="_CollectLinkerOutputs;_CollectResolvedAssemblies" />
+  <Target Name="_BlazorResolveOutputBinaries" DependsOnTargets="_CollectLinkerOutputs;_CollectResolvedAssemblies;_CollectPdbs" />
 
   <!--
   Linker enabled part of the pipeline:
@@ -507,6 +509,18 @@
 
   </Target>
 
+  <Target Name="_CollectPdbs">
+    <ItemGroup>
+      <!-- For each assembly we're outputting, look for a corresponding .pdb in $(OutDir) -->
+      <_CollectPdbsAssemblyNames Include="@(BlazorItemOutput->WithMetadataValue('Type','Assembly')->'%(Filename)')" />
+      <_CandidatePdbsPaths Include="@(_CollectPdbsAssemblyNames->'$(OutDir)%(Identity).pdb')" />
+      <BlazorItemOutput Include="@(_CandidatePdbsPaths)" Condition="Exists('%(Identity)')">
+        <TargetOutputPath>$(BlazorRuntimeBinOutputPath)%(FileName)%(Extension)</TargetOutputPath>
+        <Type>Pdb</Type>
+      </BlazorItemOutput>
+    </ItemGroup>
+  </Target>
+
   <Target
     Name="_ResolveBlazorApplicationAssemblies"
     Condition="'$(_BlazorShouldLinkApplicationAssemblies)' == ''"
@@ -583,7 +597,9 @@
   <Target Name="_ResolveBlazorIndexHtmlInputs">
     <ItemGroup>
       <BlazorIndexHtmlInput Include="$(BlazorIndexHtml)" />
+      <BlazorIndexHtmlInput Include="$(Configuration)" />
       <BlazorIndexHtmlInput Include="@(BlazorItemOutput->WithMetadataValue('Type','Assembly')->'%(FullPath)')" />
+      <BlazorIndexHtmlInput Include="@(BlazorItemOutput->WithMetadataValue('Type','Pdb')->'%(FullPath)')" />
       <BlazorIndexHtmlInput Include="@(_BlazorLinkingOption)" />
     </ItemGroup>
 
@@ -607,6 +623,7 @@
     <ItemGroup>
       <_UnlinkedAppReferencesPaths Include="@(_BlazorDependencyInput)" />
       <_AppReferences Include="@(BlazorItemOutput->WithMetadataValue('Type','Assembly')->WithMetadataValue('PrimaryOutput','')->'%(FileName)%(Extension)')" />
+      <_AppReferences Include="@(BlazorItemOutput->WithMetadataValue('Type','Pdb')->'%(FileName)%(Extension)')" Condition="'$(Configuration)' == 'Debug'" />
     </ItemGroup>
     <PropertyGroup>
       <_LinkerEnabledFlag Condition="'$(_BlazorShouldLinkApplicationAssemblies)' != ''">--linker-enabled</_LinkerEnabledFlag>
