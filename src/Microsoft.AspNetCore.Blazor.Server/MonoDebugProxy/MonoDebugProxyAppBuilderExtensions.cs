@@ -118,8 +118,8 @@ namespace Microsoft.AspNetCore.Builder
                 await context.Response.WriteAsync($@"
                     <h1>Multiple matching tabs are open</h1>
                     <p>
-                        There is more than one browser tab at {targetTabUrl}. Close the ones
-                        you do not wish to debug, then refresh this page.
+                        There is more than one browser tab at <code>{targetTabUrl}</code>.
+                        Close the ones you do not wish to debug, then refresh this page.
                     </p>");
                 return;
             }

@@ -1,6 +1,7 @@
 import '../../Microsoft.JSInterop/JavaScriptRuntime/src/Microsoft.JSInterop';
 import { platform } from './Environment';
 import { getAssemblyNameFromUrl } from './Platform/DotNet';
+import { attachDebuggerHotkey } from './Debugger';
 import './GlobalExports';
 
 async function boot() {
@@ -20,6 +21,8 @@ async function boot() {
   if (!isLinkerEnabled) {
     console.info('Blazor is running in dev mode without IL stripping. To make the bundle size significantly smaller, publish the application or see https://go.microsoft.com/fwlink/?linkid=870414');
   }
+
+  attachDebuggerHotkey(referenceAssemblies);
 
   // Determine the URLs of the assemblies we want to load
   const loadAssemblyUrls = [entryPointDll]
